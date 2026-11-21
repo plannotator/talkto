@@ -19,6 +19,7 @@ import * as Browser from "./browser-auth.js";
 import * as McpAuth from "./mcp-auth.js";
 import * as Pages from "./better-auth-pages.js";
 import * as Claim from "./better-auth-claim.js";
+import * as Password from "./better-auth-password.js";
 import * as Responses from "./responses.js";
 
 /**
@@ -147,6 +148,7 @@ const noCodes: Codes = {};
  */
 const refusedSignUp =
   "This account could not be created. Open the link you were sent, with the address it was sent to. If you already have an account here, sign in instead.";
+const passwords = Password.make();
 const randomUserId = () => P.UserId.make(`user_${crypto.randomUUID().replaceAll("-", "")}`);
 
 const instance = (database: D1Database, settings: Settings, origin: string, admission: Admission) =>
@@ -163,6 +165,7 @@ const instance = (database: D1Database, settings: Settings, origin: string, admi
       autoSignIn: true,
       minPasswordLength: 10,
       maxPasswordLength: 128,
+      password: passwords,
       // No email leaves this copy: an account link or an owner's invitation vouches for an address.
       requireEmailVerification: false,
     },
