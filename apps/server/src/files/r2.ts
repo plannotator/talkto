@@ -20,10 +20,10 @@ const failure = (operation: string) => () =>
  * only the declared size, and only once.
  */
 export const make = (settings: R2Settings) => {
-  const { bucket, accountId, bucketName, accessKeyId, secretAccessKey } = settings;
+  const { bucket, objectBase, accessKeyId, secretAccessKey } = settings;
   const client = new AwsClient({ service: "s3", region: "auto", accessKeyId, secretAccessKey });
   const link = (key: string, query: string, seconds: number = Transfers.linkSeconds) =>
-    `https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${key}?X-Amz-Expires=${seconds}${query}`;
+    `${objectBase}/${key}?X-Amz-Expires=${seconds}${query}`;
   const sign = (operation: string, url: string, init: RequestInit) =>
     Effect.tryPromise({
       try: () =>

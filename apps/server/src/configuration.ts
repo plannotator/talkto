@@ -64,11 +64,27 @@ export const readFilesRemote = Effect.fn("Configuration.readFilesRemote")(functi
 /** What signing an R2 link and reading its objects need. */
 export interface R2Settings {
   readonly bucket: R2Bucket;
-  readonly accountId: string;
-  readonly bucketName: string;
+  /** The https address before each object key in a signed link, with no trailing slash. */
+  readonly objectBase: string;
   readonly accessKeyId: string;
   readonly secretAccessKey: string;
 }
+/**
+ * R2's own S3 address, unless `TALKTO_R2_OBJECT_BASE` names another S3-compatible store that
+ * holds the binding's objects, as a self-hosted Workers runtime does.
+ */
+const objectBase = (env: Env): string | undefined => {
+  const {
+    TALKTO_R2_OBJECT_BASE: base,
+    TALKTO_R2_ACCOUNT_ID: accountId,
+    TALKTO_R2_BUCKET: name,
+  } = env;
+  if (base !== undefined)
+    return URL.canParse(base) && base.startsWith("https://") && !base.endsWith("/")
+      ? base
+      : undefined;
+  return accountId && name ? `https://${accountId}.r2.cloudflarestorage.com/${name}` : undefined;
+};
 /**
  * The R2 store's settings, or null until the binding and every value are present. Capability
  * reporting and store composition share this one predicate, so a half-configured deployment
@@ -77,13 +93,12 @@ export interface R2Settings {
 export const r2Settings = (env: Env): R2Settings | null => {
   const {
     TRANSFERS: bucket,
-    TALKTO_R2_ACCOUNT_ID: accountId,
-    TALKTO_R2_BUCKET: bucketName,
     TALKTO_R2_ACCESS_KEY_ID: accessKeyId,
     TALKTO_R2_SECRET_ACCESS_KEY: secretAccessKey,
   } = env;
-  return bucket && accountId && bucketName && accessKeyId && secretAccessKey
-    ? { bucket, accountId, bucketName, accessKeyId, secretAccessKey }
+  const base = objectBase(env);
+  return bucket && base && accessKeyId && secretAccessKey
+    ? { bucket, objectBase: base, accessKeyId, secretAccessKey }
     : null;
 };
 const ArtifactsRemoteBase = Schema.String.check(

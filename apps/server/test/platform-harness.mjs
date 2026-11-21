@@ -112,6 +112,8 @@ export async function start(t, options = {}) {
     transferStore.TALKTO_R2_BUCKET = "talkto-test-transfers";
     transferStore.TALKTO_R2_ACCESS_KEY_ID = "test-access-key";
     transferStore.TALKTO_R2_SECRET_ACCESS_KEY = "test-secret-key";
+    if (options.transferObjectBase)
+      transferStore.TALKTO_R2_OBJECT_BASE = options.transferObjectBase;
     transferBucket.r2Buckets = { TRANSFERS: "talkto-test-transfers" };
   }
   // A throwaway key per run; hosts are answered by the test's handler, never the real services.

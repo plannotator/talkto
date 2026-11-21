@@ -5,6 +5,8 @@ interface Env {
   readonly TRANSFERS?: R2Bucket;
   readonly TALKTO_R2_ACCOUNT_ID?: string;
   readonly TALKTO_R2_BUCKET?: string;
+  /** Overrides the R2 address in signed links, for another S3-compatible store. */
+  readonly TALKTO_R2_OBJECT_BASE?: string;
   readonly TALKTO_R2_ACCESS_KEY_ID?: string;
   readonly TALKTO_R2_SECRET_ACCESS_KEY?: string;
 }

@@ -30,3 +30,6 @@ apps/docs/src/content/partials/generated/
 /PRODUCT_SPEC.md
 *.tar.gz
 *.zip
+apps/server/wrangler.celld.json
+apps/server/celld-assets/
+apps/server/.celld/

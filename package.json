@@ -32,6 +32,7 @@
     "selfhost:link": "pnpm --filter @talkto/server exec node tools/better-auth-link.mjs",
     "selfhost:migrate": "pnpm --filter @talkto/server exec wrangler d1 migrations apply PLATFORM --remote --config wrangler.selfhost.jsonc",
     "selfhost:deploy": "pnpm build:selfhost && pnpm --filter @talkto/server exec wrangler deploy --config wrangler.selfhost.jsonc",
+    "celld": "pnpm --filter @talkto/server exec node tools/celld.mjs",
     "email:announce": "pnpm --filter @talkto/server exec node tools/email-announce.mjs"
   },
   "devDependencies": {

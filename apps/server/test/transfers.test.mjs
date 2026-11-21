@@ -134,6 +134,19 @@ test("an upload link opens one object, for minutes, at the declared size, once",
   assert.ok(data.expiresAt > data.uploadExpiresAt);
 });
 
+test("another S3-compatible store signs links at its own address", async (t) => {
+  const base = "https://files.example.test:8443/fleet/r2/talkto-test-transfers";
+  const s = await setup(t, { transferObjectBase: base });
+  const { data } = await s.prepare();
+  const url = new URL(data.uploadUrl);
+  assert.equal(url.origin, "https://files.example.test:8443");
+  assert.equal(
+    url.pathname,
+    `/fleet/r2/talkto-test-transfers/r30/${s.server.id}/${data.transferId}/payload`,
+  );
+  assert.ok(url.searchParams.get("X-Amz-Signature"));
+});
+
 test("nothing is offered until the upload arrives at its declared size", async (t) => {
   const s = await setup(t);
   const { data } = await s.prepare();

@@ -264,6 +264,35 @@ Then open `<origin>/app`, sign in, and create an organization and a server.
 </Step>
 </Steps>
 
+## Run it on celld instead
+
+[celld](https://github.com/denoland/celld) is Deno's self-hosted Workers runtime. It runs the same Worker, Durable Objects, D1, R2, cron and static assets on your own machines, and keeps their data in an S3-compatible bucket. A copy on celld signs people in with Better Auth: Cloudflare Access and WorkOS need Cloudflare.
+
+What is different:
+
+- celld has no rate-limit bindings and no version metadata. TalkTo runs without both.
+- celld has no TLS and no secret store. Put an https proxy in front of it. `pnpm celld deploy` stores the secrets as Worker variables in the bucket, so protect the bucket like the secrets.
+- Behind a proxy there is no `cf-connecting-ip` header, so everyone shares Better Auth's sign-in rate limits.
+- File transfers: celld keeps the transfer bucket's objects under `r2/<name>-transfers/` in its own bucket. Set `TALKTO_R2_OBJECT_BASE` to the https address where agents reach that folder, for example `https://files.example.com/talkto/r2/talkto-transfers`, and `TALKTO_R2_ACCESS_KEY_ID` and `TALKTO_R2_SECRET_ACCESS_KEY` to a key that can read and write only that folder. Without them, transfers are off. Delete transfers older than 30 days in your store yourself.
+
+To deploy, set the Better Auth variables from the steps above, then:
+
+```sh
+export TALKTO_AUTH_PROVIDER=better-auth TALKTO_SERVICE_ORIGIN=<origin> TALKTO_OWNER_EMAILS=<owners>
+export CELLD_BUCKET=s3://<bucket> S3_ENDPOINT=<S3 endpoint> AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret>
+export BETTER_AUTH_SECRET=<from openssl rand -base64 48> TALKTO_SIGNAL_KEY=<from openssl rand -base64 32>
+pnpm build:selfhost
+pnpm celld deploy
+```
+
+Start a node on the same bucket, with your proxy sending https to its listener. Add `--trust-forwarded-headers` only when the proxy replaces `X-Forwarded-Host` and `X-Forwarded-Proto`:
+
+```sh
+celld --bucket "$CELLD_BUCKET" --endpoint "$S3_ENDPOINT" --listen 127.0.0.1:8080 --trust-forwarded-headers
+```
+
+A node takes part in the fleet only after the first deploy, so apply the migrations after it starts: `pnpm celld migrate`. Then make your account link with `pnpm selfhost:link` as above. To update, run `pnpm build:selfhost`, `pnpm celld migrate` and `pnpm celld deploy`: nodes adopt the new version without a restart.
+
 ## Update to a new version
 
 Read the release notes first: they say when a release adds a setting or a secret. Then:
