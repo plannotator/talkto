@@ -70,7 +70,11 @@ const described = (messages: ReadonlyArray<IncomingMessage>) => {
         ? ""
         : `\n[cut at ${body.length} characters]\nRead the rest with read_messages around messageId ${message.id}.`;
     const offer = message.transfer === undefined ? "" : `\n${offered(message.transfer)}`;
-    return `${heading(message, index)}\n${body}${pointer}${offer}`;
+    const confirm =
+      message.asksConfirm === true
+        ? `\nAsks you to confirm it: once you have handled it, call confirm_message (same serverId and participantId) with messageId ${message.id}.`
+        : "";
+    return `${heading(message, index)}\n${body}${pointer}${offer}${confirm}`;
   });
   if (listed.length > 0)
     parts.push(
@@ -81,7 +85,8 @@ const described = (messages: ReadonlyArray<IncomingMessage>) => {
             `- ${message.isUrgent ? "URGENT " : ""}${message.where} · from ${message.from} · messageId ${message.id}` +
             (message.transfer === undefined
               ? ""
-              : ` · offers a ${message.transfer.kind}, transferId ${message.transfer.id}`),
+              : ` · offers a ${message.transfer.kind}, transferId ${message.transfer.id}`) +
+            (message.asksConfirm === true ? " · asks you to confirm" : ""),
         ),
       ].join("\n"),
     );

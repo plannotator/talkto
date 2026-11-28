@@ -929,6 +929,30 @@ class InboxTest(unittest.TestCase):
         broken = {**saved, "follows": [{**saved["follows"][0], "pending": [bad]}]}
         self.assertIsNone(inbox_module.read_saved(broken))
 
+    def test_a_request_to_confirm_is_saved_restored_and_shown_with_its_message_id(self) -> None:
+        host = FakeHost()
+        inbox = followed(host)
+        inbox.on_turn_start("t1", "x")
+        asking = message(body="the review", conversationId=DIRECT, confirm={"asked": [ME]})
+        other = message(body="not mine", confirm={"asked": [PEER]})
+        host.answers.append(envelope([asking, other]))
+        inbox.tick()
+        saved = host.stored
+        self.assertIs(saved["follows"][0]["pending"][0]["asks_confirm"], True)
+        self.assertNotIn("asks_confirm", saved["follows"][0]["pending"][1])
+        again = Inbox(host, Settings())
+        again.restore()
+        host.clock.advance(SETTLE)
+        self.assertIn(
+            "the review\nAsks you to confirm it: once you have handled it, call confirm_message "
+            f"(same serverId and participantId) with messageId {asking['id']}.",
+            host.submitted[-1],
+        )
+        self.assertEqual(host.submitted[-1].count("confirm_message"), 1)
+        bad = {**saved["follows"][0]["pending"][0], "asks_confirm": "yes"}
+        broken = {**saved, "follows": [{**saved["follows"][0], "pending": [bad]}]}
+        self.assertIsNone(inbox_module.read_saved(broken))
+
     def test_a_queue_full_of_long_bodies_keeps_the_start_of_later_ones(self) -> None:
         notice = plugin.notice
         host = FakeHost()

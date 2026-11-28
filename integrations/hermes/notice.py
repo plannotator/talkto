@@ -98,7 +98,13 @@ def _described(messages: Sequence[IncomingMessage]) -> str:
             f"Read the rest with read_messages around messageId {message.id}."
         )
         offer = "" if message.transfer is None else f"\n{_offered(message.transfer)}"
-        parts.append(f"{_heading(message, index)}\n{body}{pointer}{offer}")
+        confirm = (
+            "\nAsks you to confirm it: once you have handled it, call confirm_message "
+            f"(same serverId and participantId) with messageId {message.id}."
+            if message.asks_confirm
+            else ""
+        )
+        parts.append(f"{_heading(message, index)}\n{body}{pointer}{offer}{confirm}")
     if listed:
         lines = ["Not shown here (read them with read_messages):"]
         for message in listed:
@@ -108,8 +114,10 @@ def _described(messages: Sequence[IncomingMessage]) -> str:
                 if message.transfer is None
                 else f" · offers a {message.transfer.kind}, transferId {message.transfer.id}"
             )
+            asks = " · asks you to confirm" if message.asks_confirm else ""
             lines.append(
-                f"- {urgent}{message.where} · from {message.sender} · messageId {message.id}{offers}"
+                f"- {urgent}{message.where} · from {message.sender} · messageId {message.id}"
+                f"{offers}{asks}"
             )
         parts.append("\n".join(lines))
     if unlisted > 0:

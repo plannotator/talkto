@@ -1684,6 +1684,7 @@ const isMessage = (value: unknown): value is QueuedMessage => {
   const transfer = fields.get("transfer");
   const cut = fields.get("cut");
   const scope = fields.get("scope");
+  const asksConfirm = fields.get("asksConfirm");
   return (
     // Absent in a message queued before plugin 0.3.5, or whose conversation TalkTo did not describe.
     (scope === undefined ||
@@ -1697,6 +1698,8 @@ const isMessage = (value: unknown): value is QueuedMessage => {
     (fields.get("isUrgent") === true || fields.get("isUrgent") === false) &&
     // Absent for a whole body, and in a message saved before the queue marked cut bodies.
     (cut === undefined || cut === true || cut === false) &&
+    // Absent in a message saved before confirm requests were kept, and in one that asks nothing.
+    (asksConfirm === undefined || asksConfirm === true || asksConfirm === false) &&
     // Absent in a message saved before offers were kept, and in one that offers nothing.
     (transfer === undefined ||
       (isObject(transfer) && offerOf(new Map(Object.entries(transfer))) !== null))

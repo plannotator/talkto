@@ -145,6 +145,28 @@ const envelopes = [
       message(200 + index, index % 2 === 0 ? { transfer: offer({ id: `t-${index}` }) } : {}),
     ),
   ),
+  // Requests to confirm: only one that asks this participant, and that it has not confirmed, shows;
+  // one a port cannot read asks nothing. The 13th message is listed on one line.
+  page([
+    message(60, { conversationId: direct, confirm: { asked: [me], confirmed: [] } }),
+    message(61, {
+      mentions: ["77777777-7777-4777-8777-777777777777"],
+      confirm: { asked: ["77777777-7777-4777-8777-777777777777"], confirmed: [] },
+    }),
+    message(62, { mentions: [me], confirm: { asked: me, confirmed: [] } }),
+    message(63, { mentions: [me], confirm: "not an object" }),
+    message(64, { mentions: [me], transfer: offer(), confirm: { asked: [7, me], confirmed: [] } }),
+    ...Array.from({ length: 9 }, (_, index) =>
+      message(
+        65 + index,
+        index === 7 ? { transfer: offer(), confirm: { asked: [me], confirmed: [] } } : {},
+      ),
+    ),
+    message(74, {
+      mentions: [me],
+      confirm: { asked: [me], confirmed: [{ participantId: me, at: "2026-11-17T15:00:00.000Z" }] },
+    }),
+  ]),
   // Why each message reached the participant, and a new-channel notice shown on one line.
   page([
     message(50, { mentions: [me] }),

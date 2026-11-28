@@ -705,6 +705,66 @@ test("a queue saved before offers were kept restores, and a saved bad offer is r
   assert.equal(isSaved({ ...old, follows: [{ ...old.follows[0], pending: [pending] }] }), false);
 });
 
+/** A request to confirm as get_updates sends it on a message, asking `asked`. */
+const confirm = (asked = [me]) => ({ asked, confirmed: [] });
+
+test("a request to confirm is queued, saved and shown with the message ID; a bad saved one is refused", async () => {
+  const host = fakeHost();
+  const inbox = await followed(host);
+  inbox.onTurnStart("t1");
+  const asking = message({ conversationId: direct, confirm: confirm() });
+  host.answers.push(reply([asking]));
+  await inbox.tick();
+  const saved = host.stored;
+  assert.equal(saved.follows[0].pending[0].asksConfirm, true, "the request is saved");
+  assert.ok(isSaved(saved));
+  await inbox.onTurnComplete("t1");
+  await host.advance(settleMillis);
+  assert.ok(
+    host.submitted[0].includes(
+      `${asking.body}\nAsks you to confirm it: once you have handled it, call confirm_message ` +
+        `(same serverId and participantId) with messageId ${asking.id}.`,
+    ),
+  );
+  const pending = { ...saved.follows[0].pending[0], asksConfirm: "yes" };
+  assert.equal(
+    isSaved({ ...saved, follows: [{ ...saved.follows[0], pending: [pending] }] }),
+    false,
+  );
+});
+
+test("a message listed on one line says it asks to be confirmed, after its offer", async () => {
+  const host = fakeHost();
+  const inbox = await followed(host);
+  inbox.onTurnStart("t1");
+  const messages = Array.from({ length: 13 }, () => message());
+  messages[12] = message({ mentions: [me], transfer: offer(), confirm: confirm() });
+  host.answers.push(reply(messages));
+  await inbox.tick();
+  await inbox.onTurnComplete("t1");
+  await host.advance(settleMillis);
+  assert.match(
+    host.submitted[0],
+    new RegExp(
+      `- #general · from planner \\(codex\\) · messageId ${messages[12].id} · offers a file, transferId ${offer().id} · asks you to confirm$`,
+      "m",
+    ),
+  );
+});
+
+test("a request to confirm that asks someone else, that the agent already confirmed, or that the plugin cannot read, is left out", () => {
+  const confirmed = {
+    asked: [me],
+    confirmed: [{ participantId: me, at: "2026-11-17T15:00:00.000Z" }],
+  };
+  for (const request of [confirm([peer]), confirmed, confirm(me), "not an object"]) {
+    const decoded = decodeUpdates(reply([message({ confirm: request })]), me);
+    assert.equal(decoded.kind, "page");
+    assert.equal(decoded.page.messages.length, 1);
+    assert.equal("asksConfirm" in decoded.page.messages[0], false);
+  }
+});
+
 test("transient failures back off; revoked access ends the follow with a notice", async () => {
   const host = fakeHost();
   const inbox = await followed(host);

@@ -86,6 +86,8 @@ class IncomingMessage:
     #: Why it reached this participant (one of ``SCOPES``). None when the reply did not describe its
     #: conversation, and in a message queued before plugin 0.3.5; such a message is delivered in full.
     scope: Optional[str] = None
+    #: True when the message asks this participant to confirm it, with confirm_message.
+    asks_confirm: bool = False
 
     def to_json(self) -> dict[str, Any]:
         saved = asdict(self)
@@ -95,6 +97,8 @@ class IncomingMessage:
             del saved["cut"]
         if self.scope is None:
             del saved["scope"]
+        if not self.asks_confirm:
+            del saved["asks_confirm"]
         return saved
 
     @staticmethod
@@ -130,11 +134,16 @@ class IncomingMessage:
         scope = value.get("scope")
         if scope is not None and scope not in SCOPES:
             return None
+        # Absent in a message saved before confirm requests were kept, and in one that asks nothing.
+        asks_confirm = value.get("asks_confirm", False)
+        if not isinstance(asks_confirm, bool):
+            return None
         return IncomingMessage(
             **{key: value[key] for key in (*texts, "is_urgent")},
             transfer=transfer,
             cut=cut,
             scope=scope,
+            asks_confirm=asks_confirm,
         )
 
 
@@ -328,6 +337,17 @@ def decode_updates(envelope: object, participant_id: str) -> UpdatesReply:
         mid, conversation_id, sender_id, created_at, body = values
         # The offer is additive: one this plugin cannot read is left out, never failing the message.
         offered = _fields(entry, "transfer")
+        # So is a request to confirm: one this plugin cannot read asks nothing, nor does one this
+        # participant already confirmed.
+        confirm = _fields(entry, "confirm")
+        asks_confirm = (
+            confirm is not None
+            and participant_id in _list(confirm, "asked")
+            and not any(
+                isinstance(done, Mapping) and _text(done, "participantId") == participant_id
+                for done in _list(confirm, "confirmed")
+            )
+        )
         messages.append(
             IncomingMessage(
                 id=mid,
@@ -340,6 +360,7 @@ def decode_updates(envelope: object, participant_id: str) -> UpdatesReply:
                 sender=names.get(sender_id, f"participant {sender_id}"),
                 transfer=None if offered is None else FileOffer.read(offered, camel=True),
                 scope=_scope(entry, channels.get(conversation_id), participant_id),
+                asks_confirm=asks_confirm,
             )
         )
     interval = data.get("wakeIntervalSeconds")

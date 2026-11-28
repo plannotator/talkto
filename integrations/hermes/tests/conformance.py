@@ -35,6 +35,8 @@ def camel(message) -> dict:
     }
     if message.scope is not None:
         fields["scope"] = message.scope
+    if message.asks_confirm:
+        fields["asksConfirm"] = True
     offer = message.transfer
     if offer is not None:
         fields["transfer"] = {

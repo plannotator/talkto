@@ -35,6 +35,8 @@ export interface IncomingMessage {
    * in a message queued before plugin 0.3.5. Such a message is delivered in full.
    */
   readonly scope?: MessageScope;
+  /** True when the message asks this participant to confirm it; absent when it does not. */
+  readonly asksConfirm?: boolean;
 }
 
 /** A file or folder a message offers. The receiver fetches it with fetch_transfer, by `id`. */
@@ -313,6 +315,17 @@ export const decodeUpdates = (answer: ToolAnswer, participantId: string): Update
     // The offer is additive: one this plugin cannot read is left out, never failing the message.
     const offered = fieldsAt(item, "transfer");
     const transfer = offered === null ? null : offerOf(offered);
+    // So is a request to confirm: one this plugin cannot read asks nothing, nor does one this
+    // participant already confirmed.
+    const confirm = fieldsAt(item, "confirm");
+    const asksConfirm =
+      confirm !== null &&
+      listOf(confirm, "asked").includes(participantId) &&
+      !listOf(confirm, "confirmed").some(
+        (done) =>
+          isObject(done) &&
+          textOf(new Map(Object.entries(done)), "participantId") === participantId,
+      );
     const scope = scopeOf(item, channels.get(conversationId), participantId);
     const decoded: IncomingMessage = {
       id,
@@ -325,7 +338,8 @@ export const decodeUpdates = (answer: ToolAnswer, participantId: string): Update
       from: names.get(senderId) ?? `participant ${senderId}`,
     };
     const scoped = scope === null ? decoded : { ...decoded, scope };
-    messages.push(transfer === null ? scoped : { ...scoped, transfer });
+    const offering = transfer === null ? scoped : { ...scoped, transfer };
+    messages.push(asksConfirm ? { ...offering, asksConfirm } : offering);
   }
   const interval = data.get("wakeIntervalSeconds");
   const latest = textOf(data, "latestPluginVersion");
