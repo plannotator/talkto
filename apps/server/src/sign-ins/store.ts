@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import * as Model from "../platform/model.js";
+import { describeFailure } from "../failure-log.js";
 import * as Telemetry from "../telemetry.js";
 
 /*
@@ -135,13 +136,46 @@ export const layer = (database: D1Database) =>
           .bind(...values);
     const run = (statement: () => D1PreparedStatement) =>
       Effect.tryPromise({ try: () => statement().run(), catch: storage });
+    const decoded = <A>(schema: Schema.Decoder<A>, result: D1Result) =>
+      Schema.decodeUnknownEffect(Schema.Array(schema))(result.results).pipe(
+        Effect.mapError(() => storage()),
+      );
     const all = <A>(schema: Schema.Decoder<A>, statement: () => D1PreparedStatement) =>
       Effect.tryPromise({ try: () => statement().all(), catch: storage }).pipe(
-        Effect.flatMap((result) =>
-          Schema.decodeUnknownEffect(Schema.Array(schema))(result.results).pipe(
-            Effect.mapError(() => storage()),
-          ),
-        ),
+        Effect.flatMap((result) => decoded(schema, result)),
+      );
+    /*
+      The sign-out check runs on every MCP request, so it reads the nearest read replica (Sentry
+      TALKTO-SERVER-C: the primary's hiccups all hit this read). A fresh session per read, so it
+      never shares the primary session's bookmark. A failed replica read is tried once more, at
+      once, on the primary, then fails as before: a bad replica is never worse than no replica. The
+      fallback only logs, so a flaky replica does not page. Without read replication on the
+      database, `first-unconstrained` reads the primary too.
+    */
+    const replicaFirst = <A>(
+      schema: Schema.Decoder<A>,
+      query: string,
+      values: ReadonlyArray<Value>,
+    ) =>
+      Effect.tryPromise({
+        try: () =>
+          database
+            .withSession("first-unconstrained")
+            .prepare(query)
+            .bind(...values)
+            .all(),
+        catch: (cause) => cause,
+      }).pipe(
+        Effect.matchEffect({
+          onSuccess: (result) => decoded(schema, result),
+          onFailure: (cause) =>
+            Effect.sync(() =>
+              console.warn(
+                "sign-ins: the sign-out check failed on a read replica; reading the primary",
+                describeFailure(cause),
+              ),
+            ).pipe(Effect.andThen(all(schema, sql(query, values)))),
+        }),
       );
     return Store.of({
       record: (seen, throttle, cap) =>
@@ -175,12 +209,10 @@ export const layer = (database: D1Database) =>
           ),
         ).pipe(Effect.asVoid),
       revocations: (userId, now) =>
-        all(
+        replicaFirst(
           Revocation,
-          sql(
-            "SELECT client_id AS clientId,sid,revoked_at AS revokedAt FROM mcp_revocations WHERE user_id=? AND expires_at>?",
-            [userId, now],
-          ),
+          "SELECT client_id AS clientId,sid,revoked_at AS revokedAt FROM mcp_revocations WHERE user_id=? AND expires_at>?",
+          [userId, now],
         ),
       active: (userId) =>
         all(

@@ -578,6 +578,9 @@ const guides = [
           by: "you",
         },
       ],
+      notes: [
+        "Two Antigravity sessions on one computer can sign each other out of TalkTo (an invalid_grant error): Antigravity does not lock the token file they share. Until Google fixes it, keep one Antigravity session connected to TalkTo. If a session shows TalkTo as signed out, restart that session or run `/mcp` in it.",
+      ],
       extras: [
         {
           title: hooksTitle,

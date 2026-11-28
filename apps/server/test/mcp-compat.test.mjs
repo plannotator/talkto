@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
-import Ajv from "ajv";
-import Ajv2020 from "ajv/dist/2020.js";
-import addFormats from "ajv-formats";
+import { availableParallelism } from "node:os";
+import { Worker } from "node:worker_threads";
 import { rpc, packet } from "./mcp-wire.mjs";
 import { start } from "./platform-harness.mjs";
 import { committedSnapshots, everyTool, outputSchemas } from "./mcp-output.mjs";
@@ -16,48 +15,63 @@ import { committedSnapshots, everyTool, outputSchemas } from "./mcp-output.mjs";
   contracts/mcp-output/, plus this build's own tools/list. See docs/mcp-compatibility.md.
 */
 
-/**
- * Validators configured as the MCP SDK's AjvJsonSchemaValidator. SDK 1.x uses the draft-07 engine
- * and SDK 2.x the 2020-12 engine for schemas without `$schema`; hosts are built on either.
- */
-const engines = [Ajv, Ajv2020].map((Engine) => {
-  const ajv = new Engine({
-    strict: false,
-    validateFormats: true,
-    validateSchema: false,
-    allErrors: true,
-  });
-  addFormats(ajv);
-  return { name: Engine === Ajv ? "draft-07" : "2020-12", ajv };
-});
-
 const sha = "a".repeat(64);
 const commit = "9f3c2ab4d1e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0";
 
-/** Check replies against every contract; collect each failure the way a host would word it. */
+/** The engines hosts validate with: SDK 1.x uses draft-07 and SDK 2.x 2020-12 (mcp-compat-worker.mjs). */
+const engines = ["draft-07", "2020-12"];
+/** Threads the checks run on: compiling the snapshots' schemas is most of this test's time. */
+const threads = Math.max(1, Math.min(4, availableParallelism()));
+
+/**
+ * Record replies during the flow, then check each against every contract. Each distinct schema
+ * (most are byte-identical across several releases) compiles once per engine, on one of `threads`
+ * workers; a failure is worded the way a host words it, naming every release that listed it.
+ */
 const contracts = (current) => {
   const sources = [...committedSnapshots(), { name: "this build's tools/list", schemas: current }];
-  const compiled = new Map();
-  const failures = [];
-  const validator = (source, engine, tool) => {
-    const key = `${source.name}\u0000${engine.name}\u0000${tool}`;
-    if (!compiled.has(key)) compiled.set(key, engine.ajv.compile(source.schemas[tool]));
-    return compiled.get(key);
-  };
+  const replies = [];
   const check = (tool, step, reply) => {
-    for (const source of sources) {
-      // A tool a release did not list cannot be called by a session from that release.
-      if (source.schemas[tool] === undefined) continue;
-      for (const engine of engines) {
-        const validate = validator(source, engine, tool);
-        if (validate(reply)) continue;
-        failures.push(
-          `${source.name} (${engine.name}), ${tool}, ${step}: Structured content does not match the tool's output schema: ${engine.ajv.errorsText(validate.errors)}`,
-        );
-      }
-    }
+    replies.push({ tool, step, reply });
   };
-  return { sources, failures, check };
+  const verify = async () => {
+    const groups = new Map();
+    for (const source of sources)
+      for (const [tool, schema] of Object.entries(source.schemas)) {
+        // A release that did not list a tool has no group for it: its sessions cannot call it.
+        const text = JSON.stringify(schema);
+        for (const engine of engines) {
+          const key = `${engine}\u0000${tool}\u0000${text}`;
+          const group = groups.get(key) ?? { engine, tool, schema, sources: [] };
+          group.sources.push(source.name);
+          groups.set(key, group);
+        }
+      }
+    const called = new Set(replies.map((entry) => entry.tool));
+    const shares = Array.from({ length: threads }, () => []);
+    [...groups.values()]
+      .filter((group) => called.has(group.tool))
+      .forEach((group, index) => shares[index % threads].push(group));
+    const results = await Promise.all(
+      shares.map(
+        (groups) =>
+          new Promise((resolve, reject) => {
+            const worker = new Worker(new URL("./mcp-compat-worker.mjs", import.meta.url), {
+              workerData: { groups, replies },
+            });
+            worker.once("message", resolve);
+            worker.once("error", reject);
+            // A worker that exits without answering (out of memory, a dependency's process.exit)
+            // fails the test at once; after its answer, this reject does nothing.
+            worker.once("exit", (code) =>
+              reject(new Error(`mcp-compat worker exited ${code} without an answer`)),
+            );
+          }),
+      ),
+    );
+    return results.flat();
+  };
+  return { sources, check, verify };
 };
 
 /** One server and two agents over one MCP connection, every reply checked against every contract. */
@@ -542,9 +556,11 @@ const agentFlow = async (x, credential, accountId, check, version) => {
   );
 };
 
-// Runs the whole agent flow twice and checks every reply against every committed output-schema
-// snapshot: 6 s alone, 29-36 s under a release run's load on boat, and over 60 s on a machine losing
-// 40% of its CPU to steal.
+// Runs the whole agent flow twice, then checks every reply against every committed output-schema
+// snapshot. Compiling the snapshots' ~120 KB schemas is most of the time, so each distinct one
+// compiles once, on 4 threads (November 26, 2026, 9 contracts, alone on boat: 65 s before, 15 s
+// after; 2.4 s of it the flows). Each snapshot whose schemas changed adds about 1 s alone; the test
+// prints its times (`flows …; checks …`) to watch that, and the timeout leaves room for a loaded run.
 const everySnapshot = { timeout: 180_000 };
 test(
   "every MCP reply matches every output schema a running session may have cached",
@@ -556,19 +572,25 @@ test(
     const current = await outputSchemas(x.raw, credential);
     // This build lists swarm memory's tools, so their replies are checked against its own schema.
     assert.ok(current.read_memory && current.get_memory_access, "memory tools are listed");
-    const { sources, failures, check } = contracts(current);
+    const { sources, check, verify } = contracts(current);
     assert.ok(sources.length >= 2, "at least one committed snapshot in contracts/mcp-output/");
     const covered = new Set();
     const checking = (tool, step, reply) => {
       covered.add(tool);
       check(tool, step, reply);
     };
+    const began = performance.now();
     for (const version of ["2026-07-28", "2025-11-25"])
       await agentFlow(x, credential, account.id, checking, version);
+    const flowed = performance.now();
     assert.deepEqual(
       Object.keys(current).filter((tool) => !covered.has(tool)),
       [],
       "every listed tool is exercised; add new tools to the flow above",
+    );
+    const failures = await verify();
+    t.diagnostic(
+      `flows ${Math.round(flowed - began)} ms; checks against ${sources.length} contracts ${Math.round(performance.now() - flowed)} ms on ${threads} threads`,
     );
     const more = failures.length > 12 ? `\n…and ${failures.length - 12} more` : "";
     assert.equal(
