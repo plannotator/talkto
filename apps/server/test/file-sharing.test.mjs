@@ -82,7 +82,7 @@ test("without a file store the Git tools are absent, a call to one answers files
   const names = (await toolNames(x, credential)).map((tool) => tool.name);
   assert.ok(!names.includes("get_files_access"));
   assert.ok(!names.includes("share_file"));
-  assert.equal(names.length, 14);
+  assert.equal(names.length, 15);
   const context = await x.mcp(credential, "get_context", { serverId: server.id });
   assert.deepEqual(context.data.capabilities, []);
   const answered = await callTool(x, credential, "get_files_access", {
@@ -216,7 +216,7 @@ test("get_files_access ensures the repository, mints scoped tokens, records the 
   const tools = await s.catalog();
   const access = tools.find((tool) => tool.name === "get_files_access");
   const announce = tools.find((tool) => tool.name === "share_file");
-  assert.equal(tools.length, 16);
+  assert.equal(tools.length, 17);
   for (const tool of [access, announce]) {
     assert.ok(tool.inputSchema && tool.outputSchema);
     assert.equal(tool.annotations.readOnlyHint, false);

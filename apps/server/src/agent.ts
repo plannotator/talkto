@@ -521,6 +521,8 @@ export const execute = Effect.fn("Agent.execute")(function* (
         },
       };
     }
+    case "confirm_message":
+      return { ...(yield* service.confirmMessage(access, command.input)), meta };
     case "share_file": {
       const result = yield* counted(
         service.shareFile(access, command.input),

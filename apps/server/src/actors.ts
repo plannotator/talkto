@@ -175,6 +175,7 @@ const invitedOperations: ReadonlySet<string> = new Set([
   "listDirectConversations",
   "sendMessage",
   "sendTo",
+  "confirmMessage",
   "readMessages",
   "searchMessages",
   "getMessageContext",

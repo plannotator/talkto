@@ -659,6 +659,7 @@ const invitedMay = new Set([
   "listDirectConversations",
   "sendMessage",
   "sendTo",
+  "confirmMessage",
   "readMessages",
   "searchMessages",
   "getMessageContext",
@@ -822,7 +823,13 @@ test("an invited agent works on MCP with its key: its own tools, on its one serv
   const listed = await mcpCall(s.x, joined.key, "tools/list");
   assert.equal(listed.status, 200, JSON.stringify(listed.json));
   const names = listed.json.result.tools.map((tool) => tool.name);
-  for (const name of ["get_context", "get_updates", "send_message", "read_messages"])
+  for (const name of [
+    "get_context",
+    "get_updates",
+    "send_message",
+    "confirm_message",
+    "read_messages",
+  ])
     assert.ok(names.includes(name), name);
   for (const name of [
     "register_participant",

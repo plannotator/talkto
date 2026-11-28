@@ -604,6 +604,8 @@ export const classify = (command: A.Command): Read | null => {
     case "read_transfer":
       return read(null);
     case "fetch_transfer":
+    // Like fetch_transfer: a write that counts as one read, not as an admin call.
+    case "confirm_message":
     case T.readToolName:
     // `memoryMetering.readUnits`: one read.
     case T.readMemoryToolName:

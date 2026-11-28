@@ -258,6 +258,25 @@ export interface Interface {
     | E.IdempotencyConflict
     | E.SelfConversation
     | E.WrongConversationKind
+    | E.InvalidInput
+  >;
+  /**
+   * An agent confirms a message that asked it to (send_message's `confirm`), as itself. The first
+   * time records when and posts TalkTo's notice to the sender; a repeat changes nothing. Returns
+   * the message with its current `confirm`.
+   */
+  readonly confirmMessage: (
+    access: AccessContext,
+    input: Agent.ConfirmMessage,
+  ) => Response<
+    M.Message,
+    | E.ParticipantNotFound
+    | E.NotAnAgent
+    | E.AgentNotOwned
+    | E.ParticipantRemoved
+    | E.MessageNotFound
+    | E.Forbidden
+    | E.ChannelArchived
   >;
   /** The signed-in person's own participant, or null before they first take part. Creates nothing. */
   readonly getPersonSelf: (access: AccessContext) => Response<M.PersonSelf, never>;
@@ -813,6 +832,26 @@ export const mentioned = Effect.fn("TalkTo.mentioned")(function* (
   return found;
 });
 /**
+ * The agents a message sent with `confirm` asks to confirm it: in a direct chat the other member,
+ * in a channel those it @mentions, in the order written. People are never asked: confirming is an
+ * agent tool. An agent a person removed stays asked, since a person can restore it.
+ */
+const askedToConfirm = Effect.fn("TalkTo.askedToConfirm")(function* (
+  tx: Store.Session,
+  target: M.Conversation,
+  senderId: M.ParticipantId,
+  mentions: ReadonlyArray<M.ParticipantId>,
+) {
+  const candidates =
+    target.kind === "direct" ? target.participantIds.filter((id) => id !== senderId) : mentions;
+  const agents = new Set(
+    (yield* tx.participantsByIds(candidates))
+      .filter((item) => item.kind !== "person")
+      .map((item) => item.id),
+  );
+  return candidates.filter((id) => agents.has(id));
+});
+/**
  * TalkTo's notice in General for a channel created in this same transaction. It is a message so it
  * reaches agents and people through everything that already delivers General; its sender is the
  * creating agent and its body states only the facts, marked by `notice`. It is never metered, and it
@@ -899,6 +938,44 @@ const joinNotice = Effect.fn("TalkTo.joinNotice")(function* (
   if (item === null) return yield* Effect.die("Appended notice is missing");
   return yield* describeMessages(tx, { item, created: true }, [item]);
 });
+/**
+ * TalkTo's notice that an agent confirmed a message that asked it to, written with the
+ * confirmation in the same transaction, so it exists once per message and agent. Its sender is the
+ * confirming agent, in the message's conversation; in a channel it @mentions the message's sender,
+ * who receives it like a direct message. It is never metered.
+ */
+const confirmNotice = Effect.fn("TalkTo.confirmNotice")(function* (
+  tx: Store.Session,
+  access: AccessContext,
+  confirmed: M.Message,
+  target: M.Conversation,
+  confirmer: M.Participant,
+  messageId: M.MessageId,
+  at: M.Timestamp,
+) {
+  const sender = yield* participant(tx, confirmed.senderId);
+  const latest = yield* tx.latestMessage();
+  const createdAt =
+    [at, confirmer.createdAt, target.createdAt, latest?.createdAt ?? at].sort().at(-1) ?? at;
+  const appended = yield* tx.append({
+    id: messageId,
+    conversationId: confirmed.conversationId,
+    senderId: confirmer.id,
+    body: M.MessageBody.make(
+      `TalkTo: ${confirmer.name} confirmed @${sender.name}'s message ${confirmed.id}.`,
+    ),
+    createdAt,
+    grantId: access.grantId,
+    // Outside what agents choose in practice, and unique per message and confirming agent.
+    requestKey: M.RequestKey.make(`talkto.confirmed:${confirmed.id}:${confirmer.id}`),
+  });
+  yield* tx.addConfirmNotice(appended, confirmed.id);
+  if (target.kind === "channel") yield* tx.addMentions(appended, [confirmed.senderId]);
+  // Re-read, so the outcome carries the mention and the conversation that decide who is woken.
+  const item = yield* tx.message(appended.id);
+  if (item === null) return yield* Effect.die("Appended notice is missing");
+  return yield* describeMessages(tx, { item, created: true }, [item]);
+});
 /** The notice's text: who created which channel, its description, and how to follow it. */
 const channelNoticeBody = (
   channel: Pick<M.Channel, "id" | "name" | "description">,
@@ -919,6 +996,8 @@ const append = Effect.fn("TalkTo.append")(function* (
   meter: Metering.Meter["Service"],
   spend: Spend = plainMessage,
   actor: Actor = "agent",
+  /** Set only by send_message (`sendTo`): ask the agents the message addresses to confirm it. */
+  confirm = false,
 ) {
   // A person's participant never sends through an agent operation, not even as a replay, and an
   // agent sends only as an agent its own person registered.
@@ -935,7 +1014,8 @@ const append = Effect.fn("TalkTo.append")(function* (
       item.body !== input.body ||
       !sameShare(item.share, spend.share) ||
       (item.transfer?.id ?? null) !== spend.transferId ||
-      isUrgent(item.priority) !== isUrgent(input.priority)
+      isUrgent(item.priority) !== isUrgent(input.priority) ||
+      (item.confirm !== undefined) !== confirm
     )
       return yield* conflict();
     return yield* describeMessages(tx, { item, created: false }, [item]);
@@ -955,6 +1035,14 @@ const append = Effect.fn("TalkTo.append")(function* (
       message:
         'priority="urgent" is limited to direct chats. Send it to the participant directly, or send it to this channel without priority.',
     });
+  const mentions =
+    target.kind === "channel" ? yield* mentioned(tx, input.body, input.participantId) : [];
+  const asked = confirm ? yield* askedToConfirm(tx, target, input.participantId, mentions) : [];
+  if (confirm && asked.length === 0)
+    return yield* new E.InvalidInput({
+      message:
+        "confirm: true would ask no agent. It asks the other agent in a direct chat, or the agents a channel message @mentions; people are never asked. In a channel, @mention the agents that should confirm it; otherwise send it without confirm.",
+    });
   const latest = yield* tx.latestMessage();
   const createdAt =
     [at, sender.createdAt, target.createdAt, latest?.createdAt ?? at].sort().at(-1) ?? at;
@@ -968,13 +1056,18 @@ const append = Effect.fn("TalkTo.append")(function* (
     grantId: access.grantId,
     requestKey: input.requestKey,
   });
-  const mentions =
-    target.kind === "channel" ? yield* mentioned(tx, input.body, input.participantId) : [];
-  if (spend.share === null && spend.transferId === null && !urgent && mentions.length === 0)
+  if (
+    spend.share === null &&
+    spend.transferId === null &&
+    !urgent &&
+    mentions.length === 0 &&
+    asked.length === 0
+  )
     return yield* describeMessages(tx, { item: appended, created: true }, [appended]);
   if (spend.share !== null) yield* tx.addShare(appended, spend.share);
   if (spend.transferId !== null) yield* tx.attachTransfer(spend.transferId, appended.id);
   if (urgent) yield* tx.addPriority(appended);
+  if (asked.length > 0) yield* tx.addConfirms(appended, asked);
   if (mentions.length > 0) yield* tx.addMentions(appended, mentions);
   // Re-read through the shared projection so the reply carries exactly what every reader will see.
   const item = yield* tx.message(appended.id);
@@ -1785,7 +1878,10 @@ export const layer = Layer.effect(
         return yield* send(
           run(access, "sendMessage", (tx) =>
             Effect.gen(function* () {
-              return yield* append(tx, access, id, input, messageId, at, meter);
+              return yield* append(tx, access, id, input, messageId, at, meter).pipe(
+                // Only send_message asks for confirmation, so nothing here is refused for it.
+                Effect.catchTag("InvalidInput", (error) => Effect.die(error)),
+              );
             }),
           ),
         ).pipe(Effect.tap(announce));
@@ -1808,10 +1904,55 @@ export const layer = Layer.effect(
                       directId,
                       at,
                     )).item.id;
-              return yield* append(tx, access, id, input, messageId, at, meter);
+              return yield* append(
+                tx,
+                access,
+                id,
+                input,
+                messageId,
+                at,
+                meter,
+                plainMessage,
+                "agent",
+                input.confirm === true,
+              );
             }),
           ),
         ).pipe(Effect.tap(announce));
+      }),
+      confirmMessage: Effect.fn("TalkTo.confirmMessage")(function* (access, input) {
+        const noticeId = M.MessageId.make(yield* ids.uuid());
+        const at = yield* now;
+        const result = yield* run(access, "confirmMessage", (tx) =>
+          Effect.gen(function* () {
+            // The confirmation names the confirming agent, so it must be the caller's own.
+            const confirmer = yield* Actors.requireOwnAgent(tx, access, input.participantId);
+            const item = yield* message(tx, input.messageId);
+            if (item.confirm === undefined || !item.confirm.asked.includes(confirmer.id))
+              return yield* new E.Forbidden({
+                message: "This message did not ask you to confirm it.",
+              });
+            // A repeat answers with the message as it is: no second time, no second notice.
+            if (item.confirm.confirmed.some((entry) => entry.participantId === confirmer.id))
+              return { outcome: yield* describeMessages(tx, item, [item]), notice: null };
+            const target = yield* tx.conversation(item.conversationId);
+            if (target === null)
+              return yield* Effect.die("A stored message's conversation is missing");
+            if (target.kind === "channel" && target.archivedAt !== null)
+              return yield* new E.ChannelArchived({
+                message: "Reopen the channel before confirming its messages.",
+              });
+            const notice = yield* confirmNotice(tx, access, item, target, confirmer, noticeId, at);
+            // Recorded at the notice's time.
+            yield* tx.markConfirmed(item, confirmer.id, notice.data.item.createdAt);
+            const current = yield* tx.message(item.id);
+            if (current === null) return yield* Effect.die("Confirmed message is missing");
+            return { outcome: yield* describeMessages(tx, current, [current]), notice };
+          }),
+        );
+        // The sender hears once the confirmation has committed, as for any message from that agent.
+        if (result.notice !== null) yield* announce(result.notice);
+        return result.outcome;
       }),
       getPersonSelf: Effect.fn("TalkTo.getPersonSelf")(function* (access) {
         return yield* run(access, "getPersonSelf", (tx) =>
@@ -1914,9 +2055,11 @@ export const layer = Layer.effect(
               plainMessage,
               "person",
             ).pipe(
-              // A person's send is never metered and never acts as an agent; an archived channel
-              // refuses it as it refuses agents.
-              Effect.catchTag(["CapacityRequired", "AgentNotOwned"], (error) => Effect.die(error)),
+              // A person's send is never metered, never acts as an agent and never asks for
+              // confirmation; an archived channel refuses it as it refuses agents.
+              Effect.catchTag(["CapacityRequired", "AgentNotOwned", "InvalidInput"], (error) =>
+                Effect.die(error),
+              ),
             );
           }),
         ).pipe(Effect.tap(announce));
@@ -2162,7 +2305,10 @@ export const layer = Layer.effect(
                       directId,
                       at,
                     )).item.id;
-              return yield* append(tx, access, id, input, messageId, at, meter, spend);
+              return yield* append(tx, access, id, input, messageId, at, meter, spend).pipe(
+                // Only send_message asks for confirmation, so nothing here is refused for it.
+                Effect.catchTag("InvalidInput", (error) => Effect.die(error)),
+              );
             }),
           ),
         ).pipe(Effect.tap(announce));
@@ -2312,7 +2458,10 @@ export const layer = Layer.effect(
                 kind: "share",
                 share: null,
                 transferId: current.id,
-              });
+              }).pipe(
+                // Only send_message asks for confirmation, so nothing here is refused for it.
+                Effect.catchTag("InvalidInput", (error) => Effect.die(error)),
+              );
             }),
           ),
         );

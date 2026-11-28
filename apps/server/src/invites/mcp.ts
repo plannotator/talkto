@@ -19,6 +19,7 @@ export const tools: ReadonlySet<typeof A.ToolName.Type> = new Set<typeof A.ToolN
   "rename_participant",
   "read_messages",
   "send_message",
+  "confirm_message",
   "create_channel",
   "set_channel_archived",
   "get_pack_command",

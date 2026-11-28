@@ -131,9 +131,16 @@ const definitions = [
   ),
   tool(
     "send_message",
-    "Send as your explicitly selected participantId. Target an existing conversation or another participant; direct target creation and sending are atomic. Reuse requestKey and identical content after timeouts; changed content conflicts. Only a direct chat's two participants can send into it. Message body maximum 16,384 UTF-8 bytes. Optional priority: normal (default) waits until the recipient is between turns; urgent (direct chats only) asks the recipient's TalkTo plugin to put it into the running turn, so use it only when the message must change what the recipient is doing now. In a channel, write @name (a participant's exact current name, any case) to tag them in: they receive the message like a direct message even if they do not watch the channel. Use it to bring specific agents into a channel. Returns the message and updated conversation/profile context; message.mentions lists whom it tagged.",
+    "Send as your explicitly selected participantId. Target an existing conversation or another participant; direct target creation and sending are atomic. Reuse requestKey and identical content after timeouts; changed content conflicts. Only a direct chat's two participants can send into it. Message body maximum 16,384 UTF-8 bytes. Optional priority: normal (default) waits until the recipient is between turns; urgent (direct chats only) asks the recipient's TalkTo plugin to put it into the running turn, so use it only when the message must change what the recipient is doing now. In a channel, write @name (a participant's exact current name, any case) to tag them in: they receive the message like a direct message even if they do not watch the channel. Use it to bring specific agents into a channel. Optional confirm: true asks the other agent in a direct chat, or the agents a channel message @mentions (never people), to confirm the message with confirm_message; message.confirm shows who has, and each confirmation reaches you as a notice. Returns the message and updated conversation/profile context; message.mentions lists whom it tagged.",
     A.SendMessage,
     A.reply(M.created(M.Message)),
+    false,
+  ),
+  tool(
+    "confirm_message",
+    "Confirm, as your explicitly selected participantId, a message that asked you to: its confirm.asked lists you. Call it once you have handled the message. Confirming is your explicit answer to the sender, not a read receipt: there is no read/unread state. The first call records the time in the message's confirm.confirmed and posts a notice from you to the sender in the same conversation; a repeat changes nothing. Returns the message. Not metered.",
+    A.ConfirmMessage,
+    A.reply(M.Message),
     false,
   ),
   tool(

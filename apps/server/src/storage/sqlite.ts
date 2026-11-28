@@ -50,6 +50,7 @@ import taskResultsExtension from "../migrations/task-results.sql";
 import memoryExtension from "../migrations/memory-repository.sql";
 import invitedExtension from "../migrations/invited.sql";
 import joinNoticesExtension from "../migrations/join-notices.sql";
+import confirmsExtension from "../migrations/confirms.sql";
 import * as Board from "./board.js";
 import * as Memory from "./memory.js";
 import type * as Platform from "../platform/model.js";
@@ -89,6 +90,7 @@ const extensions: ReadonlyArray<string> = [
   memoryExtension,
   invitedExtension,
   joinNoticesExtension,
+  confirmsExtension,
 ];
 
 const epoch = (timestamp: M.Timestamp): number =>
@@ -276,6 +278,31 @@ const joinedColumn = Schema.NullOr(Schema.fromJsonString(M.MessageJoined)).pipe(
     ),
   }),
 );
+// Storage yields NULL for messages that asked no one to confirm; the model omits the key instead.
+const confirmColumn = Schema.NullOr(Schema.fromJsonString(M.MessageConfirm)).pipe(
+  Schema.decodeTo(Schema.optionalKey(M.MessageConfirm), {
+    decode: SchemaGetter.transformOptional<
+      typeof M.MessageConfirm.Encoded,
+      M.MessageConfirm | null
+    >(Option.flatMap(Option.fromNullOr)),
+    encode: SchemaGetter.forbidden<M.MessageConfirm | null, typeof M.MessageConfirm.Encoded>(
+      () => "Message rows are decoded from storage, never encoded",
+    ),
+  }),
+);
+// Storage yields NULL for every message but a confirmation notice; the model omits the key instead.
+const confirmationColumn = Schema.NullOr(Schema.fromJsonString(M.MessageConfirmation)).pipe(
+  Schema.decodeTo(Schema.optionalKey(M.MessageConfirmation), {
+    decode: SchemaGetter.transformOptional<
+      typeof M.MessageConfirmation.Encoded,
+      M.MessageConfirmation | null
+    >(Option.flatMap(Option.fromNullOr)),
+    encode: SchemaGetter.forbidden<
+      M.MessageConfirmation | null,
+      typeof M.MessageConfirmation.Encoded
+    >(() => "Message rows are decoded from storage, never encoded"),
+  }),
+);
 // Storage yields NULL for messages outside a task's thread; the model omits the key instead.
 const taskColumn = Schema.NullOr(Schema.fromJsonString(M.MessageTask)).pipe(
   Schema.decodeTo(Schema.optionalKey(M.MessageTask), {
@@ -296,6 +323,8 @@ const messageRow = Schema.Struct({
   mentions: mentionsColumn,
   notice: noticeColumn,
   joined: joinedColumn,
+  confirm: confirmColumn,
+  confirmation: confirmationColumn,
   task: taskColumn,
 });
 const historyRow = Schema.Struct({
@@ -381,6 +410,13 @@ const messageColumns = `id, seq AS sequence, conversation_id AS conversationId, 
  (SELECT json_object('kind',n.kind,'channelId',n.channel_id,'channelName',k.name)
   FROM message_notices n JOIN conversations k ON k.id=n.channel_id WHERE n.message_id=messages.id) AS notice,
  (SELECT json_object('participantId',j.participant_id) FROM join_notices j WHERE j.message_id=messages.id) AS joined,
+ CASE WHEN EXISTS (SELECT 1 FROM message_confirms WHERE seq=messages.seq) THEN json_object(
+  'asked',json((SELECT json_group_array(x.participant_id) FROM (SELECT participant_id FROM message_confirms
+   WHERE seq=messages.seq ORDER BY position) x)),
+  'confirmed',json((SELECT json_group_array(json_object('participantId',x.participant_id,
+   'at',strftime('%Y-%m-%dT%H:%M:%fZ',x.confirmed_at/1000.0,'unixepoch'))) FROM (SELECT participant_id,confirmed_at
+   FROM message_confirms WHERE seq=messages.seq AND confirmed_at IS NOT NULL ORDER BY confirmed_at,position) x))) END AS confirm,
+ (SELECT json_object('messageId',f.confirmed_message_id) FROM confirm_notices f WHERE f.message_id=messages.id) AS confirmation,
  (SELECT json_object('id',tm.task_id,'number',tk.number,'kind',tm.kind)
   FROM task_messages tm JOIN tasks tk ON tk.id=tm.task_id WHERE tm.message_id=messages.id) AS task`;
 const transferColumns = `id, sender_id AS senderId, grant_id AS grantId, request_key AS requestKey, name, kind, bytes,
@@ -1683,6 +1719,24 @@ export function layer(storage: DurableObjectStorage) {
         execute("INSERT INTO message_priority(message_id,seq,priority) VALUES(?,?,'urgent')", [
           message.id,
           message.sequence,
+        ]).pipe(Effect.asVoid),
+      addConfirms: Effect.fn("Sqlite.addConfirms")(function* (message, participantIds) {
+        for (const [position, participantId] of participantIds.entries())
+          yield* execute(
+            "INSERT INTO message_confirms(seq,participant_id,position) VALUES(?,?,?)",
+            [message.sequence, participantId, position],
+          );
+      }),
+      markConfirmed: (message, participantId, at) =>
+        execute(
+          "UPDATE message_confirms SET confirmed_at=? WHERE seq=? AND participant_id=? AND confirmed_at IS NULL",
+          [epoch(at), message.sequence, participantId],
+        ).pipe(Effect.asVoid),
+      addConfirmNotice: (message, confirmedId) =>
+        execute("INSERT INTO confirm_notices(message_id,seq,confirmed_message_id) VALUES(?,?,?)", [
+          message.id,
+          message.sequence,
+          confirmedId,
         ]).pipe(Effect.asVoid),
       shares: (boundary, limit) =>
         all(

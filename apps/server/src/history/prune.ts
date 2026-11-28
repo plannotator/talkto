@@ -100,6 +100,8 @@ export const remove = (
       "message_mentions",
       "message_notices",
       "join_notices",
+      "message_confirms",
+      "confirm_notices",
       "message_shares",
       // A task's other thread messages (notes) go like any message; their thread rows first.
       "task_message_recipients",

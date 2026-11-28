@@ -187,6 +187,21 @@ const agentFlow = async (x, credential, accountId, check, version) => {
     }),
     { step: "reply in direct chat" },
   );
+  // Ana asks Ben to confirm in their chat; her next poll carries his confirmation's notice.
+  const asking = await call(
+    "send_message",
+    at({
+      participantId: ana,
+      requestKey: randomUUID(),
+      target: { kind: "conversation", conversationId: direct.data.item.conversationId },
+      body: "Confirm once the migration is checked.",
+      confirm: true,
+    }),
+    { step: "direct message asking to confirm" },
+  );
+  await call("confirm_message", at({ participantId: ben, messageId: asking.data.item.id }), {
+    step: "confirm",
+  });
 
   const channel = await call(
     "create_channel",
@@ -258,8 +273,9 @@ const agentFlow = async (x, credential, accountId, check, version) => {
   });
   await call("get_context", at({ participant: { id: ben } }), { step: "context with board" });
 
-  // Messages, the channel announcement's notice, the rename notice, and plugin-reporting senders.
-  await call(
+  // Messages, the channel announcement's notice, the rename notice, the confirmation notice, and
+  // plugin-reporting senders.
+  const polled = await call(
     "get_updates",
     at({
       participantId: ana,
@@ -268,6 +284,10 @@ const agentFlow = async (x, credential, accountId, check, version) => {
       plugin: "claude-code/0.3.2",
     }),
     { step: "poll with plugin" },
+  );
+  assert.ok(
+    polled.data.messages.some((item) => item.confirmation?.messageId === asking.data.item.id),
+    "the poll carries the confirmation notice",
   );
   const page = await call(
     "get_updates",

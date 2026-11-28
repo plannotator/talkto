@@ -103,12 +103,21 @@ export const Target = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("conversation"), conversationId: M.ConversationId }),
   Schema.Struct({ kind: Schema.Literal("direct"), recipientId: M.ParticipantId }),
 ]).annotate(strict);
-/** Atomically resolve the destination and persist a message. */
+/** Atomically resolve the destination and persist a message; `confirm` asks the agents it addresses to confirm it. */
 export const SendMessage = Schema.Struct({
   ...server,
   ...I.SendMessage.fields,
   target: Target,
+  confirm: Schema.optionalKey(Schema.Boolean),
 }).annotate(strict);
+/** Confirm, as yourself, a message that asked you to; a repeat changes nothing. */
+export const ConfirmMessage = Schema.Struct({
+  ...server,
+  participantId: M.ParticipantId,
+  messageId: M.MessageId,
+}).annotate(strict);
+/** Parsed confirmation. */
+export type ConfirmMessage = typeof ConfirmMessage.Type;
 /** Create a public channel. */
 export const CreateChannel = Schema.Struct({ ...server, ...I.CreateChannel.fields }).annotate(
   strict,
@@ -302,6 +311,7 @@ export const ToolName = Schema.Literals([
   R.toolName,
   "read_messages",
   "send_message",
+  "confirm_message",
   "create_channel",
   "set_channel_archived",
   "get_files_access",
@@ -334,6 +344,7 @@ export const Command = Schema.Union([
   Schema.Struct({ tool: Schema.Literal(R.toolName), input: RenameParticipant }),
   Schema.Struct({ tool: Schema.Literal("read_messages"), input: ReadMessages }),
   Schema.Struct({ tool: Schema.Literal("send_message"), input: SendMessage }),
+  Schema.Struct({ tool: Schema.Literal("confirm_message"), input: ConfirmMessage }),
   Schema.Struct({ tool: Schema.Literal("create_channel"), input: CreateChannel }),
   Schema.Struct({ tool: Schema.Literal("set_channel_archived"), input: SetChannelArchived }),
   Schema.Struct({ tool: Schema.Literal("get_files_access"), input: GetFilesAccess }),
@@ -432,6 +443,7 @@ const standardReply = reply(
     R.Result,
     ReadData,
     M.created(M.Message),
+    M.Message,
     M.created(M.Channel),
     M.Channel,
     FilesAccess,

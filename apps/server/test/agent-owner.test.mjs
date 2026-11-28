@@ -248,6 +248,23 @@ test("every other agent operation refuses another person's agent; reads stay ope
     true,
   );
   assert.equal(rename.error.code, "forbidden");
+  // Dana asks Ana to confirm; Bob's connection cannot confirm it as her.
+  const asking = (
+    await s.call(s.bob, "send_message", {
+      participantId: s.dana,
+      requestKey: randomUUID(),
+      target: { kind: "direct", recipientId: s.ana },
+      body: "Ana, please confirm.",
+      confirm: true,
+    })
+  ).data.item;
+  refused(
+    await s.call(s.bob, "confirm_message", { participantId: s.ana, messageId: asking.id }, true),
+  );
+  assert.deepEqual(
+    (await s.history(asking.conversationId)).map((item) => item.confirm),
+    [{ asked: [s.ana], confirmed: [] }],
+  );
   // HTTP agent routes too.
   await s.x.call(
     "user_bob",

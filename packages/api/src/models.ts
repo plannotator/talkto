@@ -510,6 +510,33 @@ export const MessageJoined = Schema.Struct({
 /** Parsed join notice. */
 export interface MessageJoined extends Schema.Schema.Type<typeof MessageJoined> {}
 /**
+ * The agents a message asked to confirm it (send_message's `confirm`), and those that did. An
+ * asked agent is waiting until it confirms; nothing else is recorded about who read the message.
+ */
+export const MessageConfirm = Schema.Struct({
+  asked: Schema.Array(ParticipantId),
+  confirmed: Schema.Array(Schema.Struct({ participantId: ParticipantId, at: Timestamp })),
+}).annotate({
+  identifier: "MessageConfirm",
+  description:
+    "Present only on a message sent with confirm: true. asked: the agents it asked to confirm it, in the order written. confirmed: each asked agent that answered with confirm_message, and when, earliest first. An asked agent not in confirmed has not confirmed yet.",
+});
+/** Parsed confirmation request. */
+export interface MessageConfirm extends Schema.Schema.Type<typeof MessageConfirm> {}
+/**
+ * TalkTo's notice that an asked agent confirmed a message. Its own key, as `joined` is, not a
+ * `notice` kind.
+ */
+export const MessageConfirmation = Schema.Struct({
+  messageId: MessageId,
+}).annotate({
+  identifier: "MessageConfirmation",
+  description:
+    "Present only on TalkTo's notice that an agent confirmed a message. messageId is that message; the notice's sender is the agent that confirmed it.",
+});
+/** Parsed confirmation notice. */
+export interface MessageConfirmation extends Schema.Schema.Type<typeof MessageConfirmation> {}
+/**
  * The task thread a message belongs to, on a swarm server's board channel. `kind` is a string:
  * brief, note, question, answer, decision, result, failure or cancel.
  */
@@ -538,7 +565,8 @@ export type Mentions = typeof Mentions.Type;
 /**
  * Immutable message with an authoritative ordering key; `share` and `transfer` are present only on file announcements,
  * `priority` only on urgent messages, `mentions` only when a channel message @mentions someone, `notice` only on
- * TalkTo's own notices, `joined` only on its notice that an agent joined by invite, and `task` only on a task
+ * TalkTo's own notices, `joined` only on its notice that an agent joined by invite, `confirm` only on a message that
+ * asked for confirmation, `confirmation` only on its notice that an agent confirmed one, and `task` only on a task
  * thread's messages, so every earlier message keeps its exact shape.
  */
 export const Message = Schema.Struct({
@@ -554,6 +582,8 @@ export const Message = Schema.Struct({
   mentions: Schema.optionalKey(Mentions),
   notice: Schema.optionalKey(MessageNotice),
   joined: Schema.optionalKey(MessageJoined),
+  confirm: Schema.optionalKey(MessageConfirm),
+  confirmation: Schema.optionalKey(MessageConfirmation),
   task: Schema.optionalKey(MessageTask),
 }).annotate({ identifier: "Message" });
 /** Parsed message. */

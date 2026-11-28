@@ -385,6 +385,19 @@ export interface Session {
     message: M.Message,
     participantIds: ReadonlyArray<M.ParticipantId>,
   ) => Read<void>;
+  /** Record which agents a message appended in this same transaction asks to confirm it, in order. */
+  readonly addConfirms: (
+    message: M.Message,
+    participantIds: ReadonlyArray<M.ParticipantId>,
+  ) => Read<void>;
+  /** Record that an asked agent confirmed a message, at `at`; an earlier confirmation is kept. */
+  readonly markConfirmed: (
+    message: M.Message,
+    participantId: M.ParticipantId,
+    at: M.Timestamp,
+  ) => Read<void>;
+  /** Mark a message appended in this same transaction as the notice that `confirmedId` was confirmed. */
+  readonly addConfirmNotice: (message: M.Message, confirmedId: M.MessageId) => Read<void>;
   /** Messages carrying a share, newest first, strictly below the sequence boundary. */
   readonly shares: (boundary: number, limit: number) => Read<ReadonlyArray<M.Message>>;
   /** Where stored history begins once the retention prune removed older messages; else null. */
